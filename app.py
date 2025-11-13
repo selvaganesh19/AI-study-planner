@@ -382,8 +382,7 @@ def method_not_allowed(error):
 # ----------------------------------------------------
 # START SERVER
 # ----------------------------------------------------
-
-def create_app():
+def init_backend():
     print("🚀 Leapcell initializing AI Study Planner backend...")
     print(f"📡 API Key configured: {'YES' if OPENROUTER_API_KEY else 'NO'}")
     print(f"🤖 Model: {OPENROUTER_MODEL}")
