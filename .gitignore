@@ -1,3 +1,3 @@
 .vercel
-*.json
+frontend/manifest.json
 .env
