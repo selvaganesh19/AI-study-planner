@@ -86,9 +86,5 @@ This project is licensed under the [MIT License](https://github.com/selvaganesh1
 
 Let's build the ultimate AI Study Planner together! 🌟
 
-
-## License
-This project is licensed under the **MIT** License.
-
 ---
 🔗 GitHub Repo: https://github.com/selvaganesh19/AI-study-planner
