@@ -558,48 +558,327 @@
 
     <script type="text/babel">
 
-        // ===============================
-// CACHE + LOCAL STORAGE WRAPPER
 // ===============================
-const CACHE_NAME = "study-app-cache-v1";
+// ENCRYPTED .DAT FILE STORAGE WITH AUTO-INDEXING
+// ===============================
 
-// Save to Cache API
-const saveToCache = async (key, data) => {
-    try {
-        const cache = await caches.open(CACHE_NAME);
-        const response = new Response(JSON.stringify(data), {
-            headers: { "Content-Type": "application/json" }
-        });
-        await cache.put(key, response);
-    } catch (err) {
-        console.warn("Cache save failed:", err);
+// Simple encryption utilities
+const ENCRYPTION_KEY = 'study-app-secure-key-2024';
+
+const encrypt = (text) => {
+    let result = '';
+    for (let i = 0; i < text.length; i++) {
+        result += String.fromCharCode(
+            text.charCodeAt(i) ^ ENCRYPTION_KEY.charCodeAt(i % ENCRYPTION_KEY.length)
+        );
     }
+    return btoa(result);
 };
 
-// Read from Cache API
-const getFromCache = async (key) => {
+const decrypt = (encryptedText) => {
     try {
-        const cache = await caches.open(CACHE_NAME);
-        const response = await cache.match(key);
-        if (!response) return null;
-        return await response.json();
+        const decoded = atob(encryptedText);
+        let result = '';
+        for (let i = 0; i < decoded.length; i++) {
+            result += String.fromCharCode(
+                decoded.charCodeAt(i) ^ ENCRYPTION_KEY.charCodeAt(i % ENCRYPTION_KEY.length)
+            );
+        }
+        return result;
     } catch (err) {
+        console.warn("Decryption failed:", err);
         return null;
     }
 };
 
-// LocalStorage helper (auto JSON)
-const saveLS = (key, value) =>
-    localStorage.setItem(key, JSON.stringify(value));
-
-const loadLS = (key, fallback = null) => {
-    try {
-        const v = localStorage.getItem(key);
-        return v ? JSON.parse(v) : fallback;
-    } catch {
-        return fallback;
+// File operations using File System Access API with fallback
+class EncryptedStorage {
+    constructor() {
+        this.fileHandle = null;
+        this.dataIndex = {};
+        this.dataCache = {};
+        this.isReady = false;
+        this.init();
     }
+
+    async init() {
+        try {
+            // Try to load existing data file
+            await this.loadDataFile();
+            this.isReady = true;
+            console.log("Encrypted storage initialized successfully");
+        } catch (err) {
+            console.warn("Storage init failed, using fallback:", err);
+            this.isReady = true;
+        }
+    }
+
+    async loadDataFile() {
+        try {
+            // Check if File System Access API is supported
+            if ('showOpenFilePicker' in window) {
+                // Try to load from previous session
+                const existingData = localStorage.getItem('encrypted_storage_backup');
+                if (existingData) {
+                    const decrypted = decrypt(existingData);
+                    if (decrypted) {
+                        const parsed = JSON.parse(decrypted);
+                        this.dataCache = parsed.data || {};
+                        this.dataIndex = parsed.index || {};
+                        this.buildIndex();
+                        return;
+                    }
+                }
+            }
+            
+            // Fallback to localStorage with encryption
+            this.loadFromLocalStorage();
+        } catch (err) {
+            console.warn("Failed to load data file:", err);
+            this.initializeEmpty();
+        }
+    }
+
+    loadFromLocalStorage() {
+        try {
+            const keys = Object.keys(localStorage);
+            for (const key of keys) {
+                if (key.startsWith('encrypted_')) {
+                    const encryptedData = localStorage.getItem(key);
+                    const decrypted = decrypt(encryptedData);
+                    if (decrypted) {
+                        this.dataCache[key.replace('encrypted_', '')] = JSON.parse(decrypted);
+                    }
+                }
+            }
+            this.buildIndex();
+        } catch (err) {
+            console.warn("LocalStorage load failed:", err);
+            this.initializeEmpty();
+        }
+    }
+
+    initializeEmpty() {
+        this.dataCache = {};
+        this.dataIndex = {};
+        this.buildIndex();
+    }
+
+    buildIndex() {
+        this.dataIndex = {};
+        Object.keys(this.dataCache).forEach((key, index) => {
+            this.dataIndex[key] = {
+                index: index,
+                lastModified: Date.now(),
+                size: JSON.stringify(this.dataCache[key]).length
+            };
+        });
+    }
+
+    async save(key, data) {
+        try {
+            this.dataCache[key] = data;
+            
+            // Update index
+            this.dataIndex[key] = {
+                index: Object.keys(this.dataIndex).length,
+                lastModified: Date.now(),
+                size: JSON.stringify(data).length
+            };
+
+            // Save encrypted data
+            const encryptedData = encrypt(JSON.stringify(data));
+            localStorage.setItem(`encrypted_${key}`, encryptedData);
+
+            // Create backup of entire storage
+            await this.createBackup();
+            
+            return true;
+        } catch (err) {
+            console.warn("Save failed:", err);
+            return false;
+        }
+    }
+
+    async load(key, fallback = null) {
+        try {
+            if (this.dataCache[key]) {
+                return this.dataCache[key];
+            }
+
+            // Try to load from localStorage
+            const encryptedData = localStorage.getItem(`encrypted_${key}`);
+            if (encryptedData) {
+                const decrypted = decrypt(encryptedData);
+                if (decrypted) {
+                    const data = JSON.parse(decrypted);
+                    this.dataCache[key] = data;
+                    return data;
+                }
+            }
+
+            return fallback;
+        } catch (err) {
+            console.warn("Load failed for key:", key, err);
+            return fallback;
+        }
+    }
+
+    async createBackup() {
+        try {
+            const backupData = {
+                data: this.dataCache,
+                index: this.dataIndex,
+                timestamp: Date.now(),
+                version: '1.0'
+            };
+
+            const encryptedBackup = encrypt(JSON.stringify(backupData));
+            localStorage.setItem('encrypted_storage_backup', encryptedBackup);
+
+            // If File System Access is available, save to .dat file
+            if ('showSaveFilePicker' in window && this.fileHandle) {
+                try {
+                    const writable = await this.fileHandle.createWritable();
+                    await writable.write(encryptedBackup);
+                    await writable.close();
+                } catch (fsErr) {
+                    console.warn("File system save failed:", fsErr);
+                }
+            }
+        } catch (err) {
+            console.warn("Backup creation failed:", err);
+        }
+    }
+
+    async exportData() {
+        try {
+            const exportData = {
+                data: this.dataCache,
+                index: this.dataIndex,
+                exportDate: new Date().toISOString(),
+                version: '1.0'
+            };
+
+            const encryptedData = encrypt(JSON.stringify(exportData));
+            
+            // Create download link
+            const blob = new Blob([encryptedData], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `study-data-${Date.now()}.dat`;
+            link.click();
+            URL.revokeObjectURL(url);
+
+            return true;
+        } catch (err) {
+            console.warn("Export failed:", err);
+            return false;
+        }
+    }
+
+    async importData() {
+        try {
+            if ('showOpenFilePicker' in window) {
+                const [fileHandle] = await window.showOpenFilePicker({
+                    types: [{
+                        description: 'Study Data Files',
+                        accept: {
+                            'application/octet-stream': ['.dat']
+                        }
+                    }]
+                });
+
+                const file = await fileHandle.getFile();
+                const encryptedContent = await file.text();
+                const decrypted = decrypt(encryptedContent);
+                
+                if (decrypted) {
+                    const importedData = JSON.parse(decrypted);
+                    this.dataCache = importedData.data || {};
+                    this.dataIndex = importedData.index || {};
+                    
+                    // Save to localStorage
+                    Object.keys(this.dataCache).forEach(key => {
+                        const encrypted = encrypt(JSON.stringify(this.dataCache[key]));
+                        localStorage.setItem(`encrypted_${key}`, encrypted);
+                    });
+
+                    await this.createBackup();
+                    return true;
+                }
+            }
+            return false;
+        } catch (err) {
+            console.warn("Import failed:", err);
+            return false;
+        }
+    }
+
+    getIndex() {
+        return this.dataIndex;
+    }
+
+    async clearAll() {
+        this.dataCache = {};
+        this.dataIndex = {};
+        
+        // Clear localStorage
+        const keys = Object.keys(localStorage);
+        keys.forEach(key => {
+            if (key.startsWith('encrypted_')) {
+                localStorage.removeItem(key);
+            }
+        });
+        
+        localStorage.removeItem('encrypted_storage_backup');
+        await this.createBackup();
+    }
+}
+
+// Global storage instance
+const encryptedStorage = new EncryptedStorage();
+
+// Updated storage functions
+const saveToCache = async (key, data) => {
+    return await encryptedStorage.save(key, data);
 };
+
+const getFromCache = async (key, fallback = null) => {
+    return await encryptedStorage.load(key, fallback);
+};
+
+// Enhanced LocalStorage helper with encryption
+const saveLS = async (key, value) => {
+    return await encryptedStorage.save(key, value);
+};
+
+const loadLS = async (key, fallback = null) => {
+    return await encryptedStorage.load(key, fallback);
+};
+
+// Auto-indexing and data management
+const autoIndex = () => {
+    const index = encryptedStorage.getIndex();
+    console.log("Data Index:", index);
+    return index;
+};
+
+// Auto-initialize when page loads
+window.addEventListener('load', async () => {
+    // Wait for storage to be ready
+    while (!encryptedStorage.isReady) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    console.log("Encrypted storage ready!");
+    autoIndex();
+    
+    // Show storage controls in console
+    window.encryptedStorage = encryptedStorage;
+    console.log("Storage controls available: window.encryptedStorage");
+});
 
         const { useState, useEffect, useRef } = React;
 
@@ -721,407 +1000,399 @@ const loadLS = (key, fallback = null) => {
 
         // TaskManager Component
         const TaskManager = () => {
-    const [tasks, setTasks] = useState([]);
-    const [newTask, setNewTask] = useState('');
+            const [tasks, setTasks] = useState([]);
+            const [newTask, setNewTask] = useState('');
 
-    useEffect(() => {
-        const saved = loadLS('tasks', []);
-        setTasks(saved || []);   // safe load
-    }, []);
+            useEffect(() => {
+                const loadTasks = async () => {
+                    const saved = await loadLS('tasks', []);
+                    setTasks(saved || []);
+                };
+                loadTasks();
+            }, []);
 
-    const saveTasks = (updatedTasks) => {
-        setTasks(updatedTasks);
-        saveLS('tasks', updatedTasks);
-    };
+            const saveTasks = async (updatedTasks) => {
+                setTasks(updatedTasks);
+                await saveLS('tasks', updatedTasks);
+            };
 
-    const addTask = () => {
-        const text = newTask.trim();
-        if (!text) {
-            showToast('Please enter a task!', 'error');
-            return;
-        }
+            const addTask = () => {
+                const text = newTask.trim();
+                if (!text) {
+                    showToast('Please enter a task!', 'error');
+                    return;
+                }
 
-        const task = {
-            id: Date.now().toString(),
-            text
+                const task = {
+                    id: Date.now().toString(),
+                    text
+                };
+
+                saveTasks([...tasks, task]);
+                setNewTask('');
+                showToast('✅ Task added successfully!');
+            };
+
+            const removeTask = (id) => {
+                saveTasks(tasks.filter(task => task.id !== id));
+                showToast('🗑️ Task removed!');
+            };
+
+            return (
+                <div className="card">
+                    <div className="card-header">
+                        <span className="icon" style={{color: 'var(--secondary)'}}>✅</span>
+                        <h2 className="card-title gradient-text">Study Tasks</h2>
+                    </div>
+
+                    <div className="flex-buttons" style={{marginBottom: '1rem'}}>
+                        <input
+                            type="text"
+                            value={newTask}
+                            onChange={(e) => setNewTask(e.target.value)}
+                            onKeyPress={(e) => e.key === 'Enter' && addTask()}
+                            placeholder="Add a new study task"
+                            className="input"
+                            style={{flex: 1}}
+                        />
+                        <button onClick={addTask} className="button button-primary">
+                            <span className="icon-sm">➕</span>
+                            Add
+                        </button>
+                    </div>
+
+                    <div style={{maxHeight: '400px', overflowY: 'auto'}}>
+                        {tasks.length === 0 ? (
+                            <div className="empty-state">
+                                <p>No tasks yet. Add your first study task!</p>
+                            </div>
+                        ) : (
+                            tasks.map(task => (
+                                <div key={task.id} className="task-item">
+                                    <span>{task.text}</span>
+                                    <button onClick={() => removeTask(task.id)} className="button button-icon button-outline">
+                                        <span className="icon-sm">🗑️</span>
+                                    </button>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            );
         };
 
-        saveTasks([...tasks, task]);
-        setNewTask('');
-        showToast('✅ Task added successfully!');
-    };
+        // StudyCalendar Component with encrypted storage
+        const StudyCalendar = () => {
+            const [subjects, setSubjects] = useState(['Math', 'Science', 'Literature', 'History']);
+            const [newSubject, setNewSubject] = useState('');
+            const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+            const [schedule, setSchedule] = useState([]);
+            const [completion, setCompletion] = useState({});
 
-    const removeTask = (id) => {
-        saveTasks(tasks.filter(task => task.id !== id));
-        showToast('🗑️ Task removed!');
-    };
+            useEffect(() => {
+                const loadData = async () => {
+                    const savedSubjects = await loadLS('subjects', null);
+                    if (savedSubjects) {
+                        setSubjects(savedSubjects);
+                    }
 
-    return (
-        <div className="card">
-            <div className="card-header">
-                <span className="icon" style={{color: 'var(--secondary)'}}>✅</span>
-                <h2 className="card-title gradient-text">Study Tasks</h2>
-            </div>
+                    const savedSchedule = await loadLS('studySchedule', null);
+                    if (savedSchedule) {
+                        setSchedule(savedSchedule);
+                    } else {
+                        await initializeSchedule(subjects);
+                    }
 
-            <div className="flex-buttons" style={{marginBottom: '1rem'}}>
-                <input
-                    type="text"
-                    value={newTask}
-                    onChange={(e) => setNewTask(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && addTask()}
-                    placeholder="Add a new study task"
-                    className="input"
-                    style={{flex: 1}}
-                />
-                <button onClick={addTask} className="button button-primary">
-                    <span className="icon-sm">➕</span>
-                    Add
-                </button>
-            </div>
+                    const savedCompletion = await loadLS('taskCompletion', {});
+                    setCompletion(savedCompletion);
+                };
+                loadData();
+            }, []);
 
-            <div style={{maxHeight: '400px', overflowY: 'auto'}}>
-                {tasks.length === 0 ? (
-                    <div className="empty-state">
-                        <p>No tasks yet. Add your first study task!</p>
+            const initializeSchedule = async (subjectList) => {
+                const defaultSchedule = Array.from({ length: 7 }, () => {
+                    const daySchedule = {};
+                    subjectList.forEach(subject => daySchedule[subject] = 0.5);
+                    return daySchedule;
+                });
+
+                setSchedule(defaultSchedule);
+                await saveLS("studySchedule", defaultSchedule);
+            };
+
+            const addSubject = async () => {
+                const subject = newSubject.trim();
+                if (!subject) {
+                    showToast("Please enter a subject!", "error");
+                    return;
+                }
+                if (subjects.includes(subject)) {
+                    showToast("Subject already exists!", "error");
+                    return;
+                }
+
+                const updatedSubjects = [...subjects, subject];
+                setSubjects(updatedSubjects);
+                await saveLS("subjects", updatedSubjects);
+
+                const newSchedule = schedule.map(day => ({
+                    ...day,
+                    [subject]: 0.5
+                }));
+
+                setSchedule(newSchedule);
+                await saveLS("studySchedule", newSchedule);
+
+                setNewSubject('');
+                showToast("📚 Subject added successfully!");
+            };
+
+            const removeSubject = async (subject) => {
+                if (subjects.length <= 1) {
+                    showToast("At least one subject needed!", "error");
+                    return;
+                }
+
+                const updatedSubjects = subjects.filter(s => s !== subject);
+                setSubjects(updatedSubjects);
+                await saveLS("subjects", updatedSubjects);
+
+                const newSchedule = schedule.map(day => {
+                    const { [subject]: removed, ...rest } = day;
+                    return rest;
+                });
+
+                setSchedule(newSchedule);
+                await saveLS("studySchedule", newSchedule);
+
+                showToast("❌ Subject removed");
+            };
+
+            const updateHours = async (dayIndex, subject, hours) => {
+                const newSchedule = [...schedule];
+                newSchedule[dayIndex][subject] = hours;
+                setSchedule(newSchedule);
+                await saveLS("studySchedule", newSchedule);
+            };
+
+            const toggleCompletion = async (day, subject) => {
+                const key = `${day}-${subject}`;
+                const newCompletion = { ...completion, [key]: !completion[key] };
+                setCompletion(newCompletion);
+                await saveLS("taskCompletion", newCompletion);
+
+                const isComplete = subjects.every(s => newCompletion[`${day}-${s}`]);
+                if (isComplete) {
+                    showToast(`🎉 You completed all ${day} tasks!`);
+                }
+            };
+
+            return (
+                <div className="card">
+                    <div className="card-header">
+                        <span className="icon" style={{ color: 'var(--primary)' }}>📅</span>
+                        <h2 className="card-title gradient-text">Weekly Plan</h2>
                     </div>
-                ) : (
-                    tasks.map(task => (
-                        <div key={task.id} className="task-item">
-                            <span>{task.text}</span>
-                            <button onClick={() => removeTask(task.id)} className="button button-icon button-outline">
-                                <span className="icon-sm">🗑️</span>
+
+                    {/* Subject management */}
+                    <div style={{ marginBottom: "1rem" }}>
+                        <h4>Manage Subjects</h4>
+
+                        <div className="flex-buttons">
+                            <input
+                                className="input"
+                                value={newSubject}
+                                onChange={e => setNewSubject(e.target.value)}
+                                onKeyDown={e => e.key === "Enter" && addSubject()}
+                                placeholder="Add new subject"
+                            />
+                            <button className="button button-primary button-sm" onClick={addSubject}>
+                                ➕ Add
                             </button>
                         </div>
-                    ))
-                )}
-            </div>
-        </div>
-    );
-};
 
-
-        // StudyCalendar Component with customization
-        // StudyCalendar Component with full fixes
-const StudyCalendar = () => {
-    const [subjects, setSubjects] = useState(['Math', 'Science', 'Literature', 'History']);
-    const [newSubject, setNewSubject] = useState('');
-    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const [schedule, setSchedule] = useState([]);
-    const [completion, setCompletion] = useState({});
-
-    // Safe JSON loader
-    const safeLoad = (key, fallback) => {
-        try {
-            const stored = localStorage.getItem(key);
-            return stored ? JSON.parse(stored) : fallback;
-        } catch (e) {
-            console.warn("Invalid JSON in LocalStorage:", key);
-            return fallback;
-        }
-    };
-
-    useEffect(() => {
-        const savedSubjects = safeLoad('subjects', null);
-        if (savedSubjects) {
-            setSubjects(savedSubjects);
-        }
-
-        const savedSchedule = safeLoad('studySchedule', null);
-        if (savedSchedule) {
-            setSchedule(savedSchedule);
-        } else {
-            initializeSchedule(subjects);
-        }
-
-        const savedCompletion = safeLoad('taskCompletion', {});
-        setCompletion(savedCompletion);
-    }, []);
-
-    const initializeSchedule = (subjectList) => {
-        const defaultSchedule = Array.from({ length: 7 }, () => {
-            const daySchedule = {};
-            subjectList.forEach(subject => daySchedule[subject] = 0.5);
-            return daySchedule;
-        });
-
-        setSchedule(defaultSchedule);
-        localStorage.setItem("studySchedule", JSON.stringify(defaultSchedule));
-    };
-
-    const addSubject = () => {
-        const subject = newSubject.trim();
-        if (!subject) {
-            showToast("Please enter a subject!", "error");
-            return;
-        }
-        if (subjects.includes(subject)) {
-            showToast("Subject already exists!", "error");
-            return;
-        }
-
-        const updatedSubjects = [...subjects, subject];
-        setSubjects(updatedSubjects);
-        localStorage.setItem("subjects", JSON.stringify(updatedSubjects));
-
-        // FIX: Define newSchedule properly
-        const newSchedule = schedule.map(day => ({
-            ...day,
-            [subject]: 0.5
-        }));
-
-        setSchedule(newSchedule);
-        localStorage.setItem("studySchedule", JSON.stringify(newSchedule));
-
-        setNewSubject('');
-        showToast("📚 Subject added successfully!");
-    };
-
-    const removeSubject = (subject) => {
-        if (subjects.length <= 1) {
-            showToast("At least one subject needed!", "error");
-            return;
-        }
-
-        const updatedSubjects = subjects.filter(s => s !== subject);
-        setSubjects(updatedSubjects);
-        localStorage.setItem("subjects", JSON.stringify(updatedSubjects));
-
-        const newSchedule = schedule.map(day => {
-            const { [subject]: removed, ...rest } = day;
-            return rest;
-        });
-
-        setSchedule(newSchedule);
-        localStorage.setItem("studySchedule", JSON.stringify(newSchedule));
-
-        showToast("❌ Subject removed");
-    };
-
-    const updateHours = (dayIndex, subject, hours) => {
-        const newSchedule = [...schedule];
-        newSchedule[dayIndex][subject] = hours;
-        setSchedule(newSchedule);
-        localStorage.setItem("studySchedule", JSON.stringify(newSchedule));
-    };
-
-    const toggleCompletion = (day, subject) => {
-        const key = `${day}-${subject}`;
-        const newCompletion = { ...completion, [key]: !completion[key] };
-        setCompletion(newCompletion);
-        localStorage.setItem("taskCompletion", JSON.stringify(newCompletion));
-
-        const isComplete = subjects.every(s => newCompletion[`${day}-${s}`]);
-        if (isComplete) {
-            showToast(`🎉 You completed all ${day} tasks!`);
-        }
-    };
-
-    return (
-        <div className="card">
-            <div className="card-header">
-                <span className="icon" style={{ color: 'var(--primary)' }}>📅</span>
-                <h2 className="card-title gradient-text">Weekly Plan</h2>
-            </div>
-
-            {/* Subject management */}
-            <div style={{ marginBottom: "1rem" }}>
-                <h4>Manage Subjects</h4>
-
-                <div className="flex-buttons">
-                    <input
-                        className="input"
-                        value={newSubject}
-                        onChange={e => setNewSubject(e.target.value)}
-                        onKeyDown={e => e.key === "Enter" && addSubject()}
-                        placeholder="Add new subject"
-                    />
-                    <button className="button button-primary button-sm" onClick={addSubject}>
-                        ➕ Add
-                    </button>
-                </div>
-
-                <div className="subject-list">
-                    {subjects.map(subject => (
-                        <div key={subject} className="subject-item">
-                            <span style={{ flex: 1 }}>{subject}</span>
-                            <button
-                                onClick={() => removeSubject(subject)}
-                                className="button button-outline button-sm"
-                                disabled={subjects.length <= 1}
-                            >
-                                ❌
-                            </button>
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            {/* Weekly schedule */}
-            <div>
-                {schedule.length > 0 && days.map((day, index) => {
-                    const isComplete = subjects.every(
-                        subject => completion[`${day}-${subject}`]
-                    );
-
-                    return (
-                        <div key={day} className="schedule-day">
-                            <h4>{day}</h4>
-
-                            {isComplete && (
-                                <span style={{ float: "right", color: "green" }}>🏆</span>
-                            )}
-
+                        <div className="subject-list">
                             {subjects.map(subject => (
-                                <div
-                                    key={subject}
-                                    className="schedule-subject"
-                                >
-                                    <span>{subject}</span>
-                                    <div style={{ display: "flex", gap: "0.5rem" }}>
-                                        <input
-                                            type="number"
-                                            step="0.1"
-                                            min="0"
-                                            max="8"
-                                            value={schedule[index][subject]}
-                                            className="schedule-input"
-                                            onChange={e =>
-                                                updateHours(index, subject, parseFloat(e.target.value) || 0)
-                                            }
-                                        />
-                                        <input
-                                            type="checkbox"
-                                            checked={completion[`${day}-${subject}`] || false}
-                                            className="checkbox"
-                                            onChange={() => toggleCompletion(day, subject)}
-                                        />
-                                    </div>
+                                <div key={subject} className="subject-item">
+                                    <span style={{ flex: 1 }}>{subject}</span>
+                                    <button
+                                        onClick={() => removeSubject(subject)}
+                                        className="button button-outline button-sm"
+                                        disabled={subjects.length <= 1}
+                                    >
+                                        ❌
+                                    </button>
                                 </div>
                             ))}
                         </div>
-                    );
-                })}
-            </div>
-        </div>
-    );
-};
+                    </div>
 
+                    {/* Weekly schedule */}
+                    <div>
+                        {schedule.length > 0 && days.map((day, index) => {
+                            const isComplete = subjects.every(
+                                subject => completion[`${day}-${subject}`]
+                            );
 
-        // Music Component with language selection
+                            return (
+                                <div key={day} className="schedule-day">
+                                    <h4>{day}</h4>
+
+                                    {isComplete && (
+                                        <span style={{ float: "right", color: "green" }}>🏆</span>
+                                    )}
+
+                                    {subjects.map(subject => (
+                                        <div
+                                            key={subject}
+                                            className="schedule-subject"
+                                        >
+                                            <span>{subject}</span>
+                                            <div style={{ display: "flex", gap: "0.5rem" }}>
+                                                <input
+                                                    type="number"
+                                                    step="0.1"
+                                                    min="0"
+                                                    max="8"
+                                                    value={schedule[index][subject]}
+                                                    className="schedule-input"
+                                                    onChange={e =>
+                                                        updateHours(index, subject, parseFloat(e.target.value) || 0)
+                                                    }
+                                                />
+                                                <input
+                                                    type="checkbox"
+                                                    checked={completion[`${day}-${subject}`] || false}
+                                                    className="checkbox"
+                                                    onChange={() => toggleCompletion(day, subject)}
+                                                />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        };
+
+        // Music Component with encrypted storage
         const MusicMood = () => {
-    const [activeMood, setActiveMood] = useState(null);
-    const [language, setLanguage] = useState("english");
-    const [ptype, setPtype] = useState("lofi");
-    const [suggestion, setSuggestion] = useState(null);
-    const [loading, setLoading] = useState(false);
+            const [activeMood, setActiveMood] = useState(null);
+            const [language, setLanguage] = useState("english");
+            const [ptype, setPtype] = useState("lofi");
+            const [suggestion, setSuggestion] = useState(null);
+            const [loading, setLoading] = useState(false);
 
-    const moods = [
-        { id: 'focused', icon: '🎯', name: 'Focused' },
-        { id: 'calm', icon: '😌', name: 'Calm' },
-        { id: 'energetic', icon: '⚡', name: 'Energetic' },
-        { id: 'melancholy', icon: '🌙', name: 'Reflective' }
-    ];
+            const moods = [
+                { id: 'focused', icon: '🎯', name: 'Focused' },
+                { id: 'calm', icon: '😌', name: 'Calm' },
+                { id: 'energetic', icon: '⚡', name: 'Energetic' },
+                { id: 'melancholy', icon: '🌙', name: 'Reflective' }
+            ];
 
-    const playlistTypes = [
-        { id: "lofi", name: "LoFi" },
-        { id: "pop", name: "Pop" },
-        { id: "melody", name: "Melody" },
-        { id: "beats", name: "Beats" }
-    ];
+            const playlistTypes = [
+                { id: "lofi", name: "LoFi" },
+                { id: "pop", name: "Pop" },
+                { id: "melody", name: "Melody" },
+                { id: "beats", name: "Beats" }
+            ];
 
-    const selectMood = async (mood) => {
-        setActiveMood(mood.id);
-        setLoading(true);
+            const selectMood = async (mood) => {
+                setActiveMood(mood.id);
+                setLoading(true);
 
-        try {
-            const res = await fetch(`${API_BASE}/api/music-suggest`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    mood: mood.id,
-                    language: language,
-                    ptype: ptype
-                })
-            });
+                try {
+                    const res = await fetch(`${API_BASE}/api/music-suggest`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            mood: mood.id,
+                            language: language,
+                            ptype: ptype
+                        })
+                    });
 
-            const d = await res.json();
-            setSuggestion(d);
-        } catch (e) {
-            showToast("Error loading music", "error");
-        }
+                    const d = await res.json();
+                    setSuggestion(d);
+                } catch (e) {
+                    showToast("Error loading music", "error");
+                }
 
-        setLoading(false);
-    };
+                setLoading(false);
+            };
 
-    return (
-        <div className="card">
-            <div className="card-header">
-                <span className="icon" style={{ color: 'var(--accent)' }}>🎵</span>
-                <h2 className="card-title gradient-text">Music Player</h2>
-            </div>
+            return (
+                <div className="card">
+                    <div className="card-header">
+                        <span className="icon" style={{ color: 'var(--accent)' }}>🎵</span>
+                        <h2 className="card-title gradient-text">Music Player</h2>
+                    </div>
 
-            <label>Language</label>
-            <select value={language} className="select" onChange={(e) => setLanguage(e.target.value)}>
-                <option value="english">English</option>
-                <option value="tamil">Tamil</option>
-            </select>
+                    <label>Language</label>
+                    <select value={language} className="select" onChange={(e) => setLanguage(e.target.value)}>
+                        <option value="english">English</option>
+                        <option value="tamil">Tamil</option>
+                    </select>
 
-            <label style={{ marginTop: "1rem" }}>Playlist Type</label>
-            <select value={ptype} className="select" onChange={(e) => setPtype(e.target.value)}>
-                {playlistTypes.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-            </select>
+                    <label style={{ marginTop: "1rem" }}>Playlist Type</label>
+                    <select value={ptype} className="select" onChange={(e) => setPtype(e.target.value)}>
+                        {playlistTypes.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                    </select>
 
-            <div className="mood-grid" style={{ marginTop: "1rem" }}>
-                {moods.map(mood => (
-                    <button
-                        key={mood.id}
-                        className={`mood-button ${activeMood === mood.id ? "active" : ""}`}
-                        onClick={() => selectMood(mood)}
-                    >
-                        {mood.icon} {mood.name}
-                    </button>
-                ))}
-            </div>
+                    <div className="mood-grid" style={{ marginTop: "1rem" }}>
+                        {moods.map(mood => (
+                            <button
+                                key={mood.id}
+                                className={`mood-button ${activeMood === mood.id ? "active" : ""}`}
+                                onClick={() => selectMood(mood)}
+                            >
+                                {mood.icon} {mood.name}
+                            </button>
+                        ))}
+                    </div>
 
-            {loading && <p style={{ marginTop: "1rem" }}>Loading...</p>}
+                    {loading && <p style={{ marginTop: "1rem" }}>Loading...</p>}
 
-{suggestion && !loading && (
-    <div className="music-suggestion">
-        <h3>{suggestion.playlist_name}</h3>
-        <p>{suggestion.description}</p>
+                    {suggestion && !loading && (
+                        <div className="music-suggestion">
+                            <h3>{suggestion.playlist_name}</h3>
+                            <p>{suggestion.description}</p>
 
-<iframe
-    className="music-player"
-    src={suggestion.spotify_embed || suggestion.youtube_url}
-    allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-    loading="lazy"
-    style={{
-        width: "100%",
-        height: "380px",
-        border: "none",
-        borderRadius: "12px"
-    }}
-></iframe>
+                            <iframe
+                                className="music-player"
+                                src={suggestion.spotify_embed || suggestion.youtube_url}
+                                allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                                loading="lazy"
+                                style={{
+                                    width: "100%",
+                                    height: "380px",
+                                    border: "none",
+                                    borderRadius: "12px"
+                                }}
+                            ></iframe>
+                        </div>
+                    )}
+                </div>
+            );
+        };
 
-    </div>
-)}
-
-        </div>
-    );
-};
-
-        // Theme Selector Component
+        // Theme Selector Component with encrypted storage
         const ThemeSelector = () => {
             const [activeTheme, setActiveTheme] = useState('purple');
 
             useEffect(() => {
-                const saved = localStorage.getItem('selectedTheme');
-                if (saved && themes[saved]) {
-                    setActiveTheme(saved);
-                    applyTheme(themes[saved]);
-                }
+                const loadTheme = async () => {
+                    const saved = await loadLS('selectedTheme', 'purple');
+                    if (saved && themes[saved]) {
+                        setActiveTheme(saved);
+                        applyTheme(themes[saved]);
+                    }
+                };
+                loadTheme();
             }, []);
 
             const applyTheme = (theme) => {
@@ -1131,9 +1402,9 @@ const StudyCalendar = () => {
                 root.style.setProperty('--secondary', theme.secondary);
             };
 
-            const selectTheme = (themeId) => {
+            const selectTheme = async (themeId) => {
                 setActiveTheme(themeId);
-                localStorage.setItem('selectedTheme', themeId);
+                await saveLS('selectedTheme', themeId);
                 applyTheme(themes[themeId]);
                 showToast(`🎨 ${themes[themeId].name} theme applied!`);
             };
@@ -1295,8 +1566,37 @@ const StudyCalendar = () => {
             );
         };
 
-        // Main App Component
+        // Main App Component with storage controls
         const App = () => {
+            const [showStorageControls, setShowStorageControls] = useState(false);
+
+            const exportData = async () => {
+                const success = await encryptedStorage.exportData();
+                if (success) {
+                    showToast('📁 Data exported successfully!');
+                } else {
+                    showToast('❌ Export failed!', 'error');
+                }
+            };
+
+            const importData = async () => {
+                const success = await encryptedStorage.importData();
+                if (success) {
+                    showToast('📁 Data imported successfully! Refreshing...');
+                    setTimeout(() => window.location.reload(), 1500);
+                } else {
+                    showToast('❌ Import failed!', 'error');
+                }
+            };
+
+            const clearAllData = async () => {
+                if (confirm('Are you sure you want to clear all data? This cannot be undone!')) {
+                    await encryptedStorage.clearAll();
+                    showToast('🗑️ All data cleared! Refreshing...');
+                    setTimeout(() => window.location.reload(), 1500);
+                }
+            };
+
             return (
                 <>
                     <header>
@@ -1307,8 +1607,38 @@ const StudyCalendar = () => {
                                 </div>
                                 <h1>AI Study Planner</h1>
                                 <span className="icon animate-bounce" style={{color: 'var(--secondary)', animationDelay: '0.5s'}}>✨</span>
+                                <button 
+                                    onClick={() => setShowStorageControls(!showStorageControls)}
+                                    className="button button-outline button-sm"
+                                    style={{marginLeft: '1rem'}}
+                                >
+                                    🔒 Data
+                                </button>
                             </div>
-                            <p className="subtitle">Your personal AI-powered study companion with customizable themes and playlists</p>
+                            <p className="subtitle">Your personal AI-powered study companion with encrypted data storage</p>
+                            
+                            {showStorageControls && (
+                                <div style={{
+                                    background: 'rgba(255,255,255,0.9)',
+                                    padding: '1rem',
+                                    borderRadius: '0.5rem',
+                                    marginTop: '1rem',
+                                    display: 'flex',
+                                    gap: '0.5rem',
+                                    justifyContent: 'center',
+                                    flexWrap: 'wrap'
+                                }}>
+                                    <button onClick={exportData} className="button button-outline button-sm">
+                                        📤 Export
+                                    </button>
+                                    <button onClick={importData} className="button button-outline button-sm">
+                                        📥 Import
+                                    </button>
+                                    <button onClick={clearAllData} className="button button-outline button-sm">
+                                        🗑️ Clear All
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </header>
 
@@ -1338,5 +1668,3 @@ const StudyCalendar = () => {
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
-</body>
-</html>
