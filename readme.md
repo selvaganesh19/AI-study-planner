@@ -1,9 +1,9 @@
 # AI Study Planner 🚀
 
-[![GitHub stars](https://img.shields.io/github/stars/selvaganesh19/AI-study-planner?style=social)](https://github.com/selvaganesh19/AI-study-planner)
+<!-- [![GitHub stars](https://img.shields.io/github/stars/selvaganesh19/AI-study-planner?style=social)](https://github.com/selvaganesh19/AI-study-planner)
 [![GitHub forks](https://img.shields.io/github/forks/selvaganesh19/AI-study-planner?style=social)](https://github.com/selvaganesh19/AI-study-planner)
 [![GitHub issues](https://img.shields.io/github/issues/selvaganesh19/AI-study-planner)](https://github.com/selvaganesh19/AI-study-planner/issues)
-[![License](https://img.shields.io/github/license/selvaganesh19/AI-study-planner)](https://github.com/selvaganesh19/AI-study-planner/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/selvaganesh19/AI-study-planner)](https://github.com/selvaganesh19/AI-study-planner/blob/main/LICENSE) -->
 
 ✨ **AI Study Planner** is your personal AI-powered study assistant, designed to help you create optimized study schedules and maximize your learning efficiency. ✨
 
