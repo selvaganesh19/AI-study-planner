@@ -13,7 +13,7 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL","z-ai/glm-4.5-air:free")
 
 app = Flask(__name__)
 
-# Enable CORS for all domains
+# Enable CORS for all domains d
 CORS(app, origins="*")
 
 @app.route('/')
