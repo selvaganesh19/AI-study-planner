@@ -9,7 +9,7 @@ from flask_cors import CORS
 load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-r1:free")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL")
 
 app = Flask(__name__, static_folder='../frontend', static_url_path='')
 
@@ -381,8 +381,5 @@ def method_not_allowed(error):
 # ----------------------------------------------------
 if __name__ == '__main__':
     print("🚀 Starting AI Study Planner...")
-    print(f"📡 API Key configured: {'✅' if OPENROUTER_API_KEY else '❌'}")
-    print(f"🤖 Model: {OPENROUTER_MODEL}")
-    print("🌐 Server running at: http://localhost:5000")
     
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000)), debug=True)
