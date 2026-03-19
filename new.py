@@ -9,16 +9,19 @@ from flask_cors import CORS
 load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL","z-ai/glm-4.5-air:free")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-r1:free")
 
 app = Flask(__name__)
 
 # Enable CORS for all domains
 CORS(app, origins="*")
 
-@app.route('/')
-def index():
-    return send_from_directory('../frontend', 'index.html')
+@app.route("/")
+def home():
+    return jsonify({
+        "status": "running",
+        "message": "AI Study Planner Backend (HuggingFace Space)"
+    })
 
 # ----------------------------------------------------
 #  AI Assistant API
@@ -379,7 +382,8 @@ def method_not_allowed(error):
 # ----------------------------------------------------
 # START SERVER
 # ----------------------------------------------------
-if __name__ == '__main__':
-    print("🚀 Starting AI Study Planner...")
-    
-    app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000)), debug=True)
+def init_backend():
+    print("🚀 Leapcell initializing AI Study Planner backend...")
+    print(f"📡 API Key configured: {'YES' if OPENROUTER_API_KEY else 'NO'}")
+    print(f"🤖 Model: {OPENROUTER_MODEL}")
+    return app
