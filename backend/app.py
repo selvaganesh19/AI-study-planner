@@ -9,7 +9,7 @@ from flask_cors import CORS
 load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL","z-ai/glm-4.5-air:free")
 
 app = Flask(__name__, static_folder='../frontend', static_url_path='')
 
